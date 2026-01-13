@@ -67,8 +67,11 @@ The simulator models:
 
 ### Optimization Parameters
 
-- `depth_factor` (0.30 - 0.60): How deep the grooves are relative to bead diameter
-- `row_spacing` (0.2 - 0.8 mm): Spacing between groove centers beyond bead diameter
+- `bead_dia` (2.4 - 2.8 mm): Groove diameter in the SCAD file (simulated beads stay at 2.5mm)
+- `depth_factor` (0.30 - 0.60): How deep the grooves are relative to groove diameter
+- `row_spacing` (0.2 - 0.8 mm): Spacing between groove centers beyond groove diameter
+
+Note: The `bead_dia` parameter affects groove size in the generated tray, but the simulated beads always use the physical bead outer diameter (2.5mm). This allows optimizing groove fit tolerance.
 
 ### Output
 

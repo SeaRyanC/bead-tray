@@ -12,10 +12,14 @@ use std::io::{BufReader, Write};
 use std::process::Command;
 
 // Physical constants from problem statement
+#[allow(dead_code)]
 const BEAD_MASS_G: f64 = 0.01;          // grams
+#[allow(dead_code)]
 const BEAD_LENGTH_MM: f64 = 2.8;         // mm
 const BEAD_OUTER_DIA_MM: f64 = 2.5;      // mm
+#[allow(dead_code)]
 const BEAD_INNER_DIA_MM: f64 = 1.5;      // mm
+#[allow(dead_code)]
 const TRAY_MASS_G: f64 = 10.45;          // grams
 const FRICTION_ANGLE_DEG: f64 = 55.0;    // degrees (angle at which bead starts sliding)
 const GRAVITY_MM_S2: f64 = 9810.0;       // mm/s^2
@@ -29,12 +33,6 @@ const TRAY_TILT_DEG: f64 = 10.0;         // Tilt toward closed end
 // Shaking parameters (reasonable hand shaking)
 const SHAKE_AMPLITUDE_MM: f64 = 15.0;    // Amplitude of shake
 const SHAKE_FREQUENCY_HZ: f64 = 3.0;     // Frequency (3 Hz is typical hand shake)
-
-// Suppress unused warnings for physical constants we document but don't directly use
-const _: f64 = BEAD_MASS_G;
-const _: f64 = BEAD_LENGTH_MM;
-const _: f64 = BEAD_INNER_DIA_MM;
-const _: f64 = TRAY_MASS_G;
 
 /// Represents the tray geometry extracted from STL
 #[derive(Debug, Clone)]
@@ -133,8 +131,8 @@ fn print_help() {
     println!();
     println!("USAGE:");
     println!("  bead_simulator              Run single simulation with default config");
-    println!("  bead_simulator optimize     Run full optimization (49 configurations)");
-    println!("  bead_simulator quick-test   Run quick optimization test (4 configurations)");
+    println!("  bead_simulator optimize     Run full optimization (245 configurations)");
+    println!("  bead_simulator quick-test   Run quick optimization test (8 configurations)");
     println!("  bead_simulator help         Show this help message");
     println!();
     println!("DESCRIPTION:");
@@ -142,8 +140,10 @@ fn print_help() {
     println!("  aligning beads axially when shaken. It uses physics simulation to");
     println!("  model 100 beads being shaken in the tray.");
     println!();
-    println!("  The optimization mode searches over depth_factor and row_spacing");
-    println!("  parameters to find the best tray configuration.");
+    println!("  The optimization mode searches over bead_dia (groove size), depth_factor,");
+    println!("  and row_spacing parameters to find the best tray configuration.");
+    println!("  Note: bead_dia affects groove size in the SCAD file, but simulated beads");
+    println!("  always use the physical bead diameter (2.5mm).");
     println!();
     println!("OUTPUT:");
     println!("  Results are saved to optimization_results.json when running optimize mode.");
@@ -183,48 +183,53 @@ fn run_optimization(quick_test: bool) {
     } else {
         println!("=== Bead Tray Optimization ===\n");
     }
-    println!("Optimizing parameters: depth_factor, row_spacing\n");
+    println!("Optimizing parameters: bead_dia (groove size), depth_factor, row_spacing\n");
     
     // Define parameter ranges to search
-    let (depth_factors, row_spacings): (Vec<f64>, Vec<f64>) = if quick_test {
-        // Quick test: just 2x2 grid
-        (vec![0.40, 0.50], vec![0.3, 0.5])
+    // bead_dia affects groove diameter in SCAD but simulated beads stay at BEAD_OUTER_DIA_MM
+    let (bead_dias, depth_factors, row_spacings): (Vec<f64>, Vec<f64>, Vec<f64>) = if quick_test {
+        // Quick test: 2x2x2 grid = 8 configs
+        (vec![2.6, 2.8], vec![0.40, 0.50], vec![0.3, 0.5])
     } else {
-        // Full search: 7x7 grid
+        // Full search: 5x7x7 grid = 245 configs
         (
+            vec![2.4, 2.5, 2.6, 2.7, 2.8],  // Groove diameters from tight to loose fit
             (30..=60).step_by(5).map(|x| x as f64 / 100.0).collect(),
             (2..=8).step_by(1).map(|x| x as f64 / 10.0).collect(),
         )
     };
     
     println!("Search space:");
+    println!("  bead_dia (groove size): {:?}", bead_dias);
     println!("  depth_factor: {:?}", depth_factors);
     println!("  row_spacing: {:?}", row_spacings);
     
     let mut best_result: Option<SimulationResult> = None;
     let mut results: Vec<SimulationResult> = Vec::new();
     
-    // Grid search with parallel evaluation
-    let configs: Vec<TrayConfig> = depth_factors
-        .iter()
-        .flat_map(|&df| {
-            row_spacings.iter().map(move |&rs| {
+    // Grid search over all parameters
+    let mut configs: Vec<TrayConfig> = Vec::new();
+    for &bd in &bead_dias {
+        for &df in &depth_factors {
+            for &rs in &row_spacings {
                 let mut config = TrayConfig::default();
+                config.bead_dia = bd;
                 config.depth_factor = df;
                 config.row_spacing = rs;
-                config
-            })
-        })
-        .collect();
+                configs.push(config);
+            }
+        }
+    }
     
     println!("\nTotal configurations to test: {}\n", configs.len());
     
     // Run simulations (sequentially since STL generation needs file system)
     for (i, config) in configs.iter().enumerate() {
         println!(
-            "[{}/{}] Testing depth_factor={:.2}, row_spacing={:.2}...",
+            "[{}/{}] Testing bead_dia={:.2}, depth_factor={:.2}, row_spacing={:.2}...",
             i + 1,
             configs.len(),
+            config.bead_dia,
             config.depth_factor,
             config.row_spacing
         );
@@ -258,6 +263,7 @@ fn run_optimization(quick_test: bool) {
     
     if let Some(best) = &best_result {
         println!("Best configuration found:");
+        println!("  bead_dia (groove size): {:.2}", best.config.bead_dia);
         println!("  depth_factor: {:.2}", best.config.depth_factor);
         println!("  row_spacing: {:.2}", best.config.row_spacing);
         println!("  Alignment Score: {:.2}%", best.alignment_score * 100.0);
@@ -462,11 +468,8 @@ fn run_simulation(geometry: &TrayGeometry, config: &TrayConfig) -> SimulationRes
         // Current time
         let t = step as f64 * DT;
         
-        // Shaking motion (sinusoidal in X and Y with phase offset)
-        let _shake_x = SHAKE_AMPLITUDE_MM * (2.0 * PI * SHAKE_FREQUENCY_HZ * t).sin();
-        let _shake_y = SHAKE_AMPLITUDE_MM * (2.0 * PI * SHAKE_FREQUENCY_HZ * t + PI / 3.0).sin() * 0.5;
-        
-        // Tray acceleration from shaking
+        // Tray acceleration from shaking (second derivative of sinusoidal motion)
+        // We use acceleration to model pseudo-force on beads in tray's reference frame
         let shake_accel_x = -SHAKE_AMPLITUDE_MM * (2.0 * PI * SHAKE_FREQUENCY_HZ).powi(2)
             * (2.0 * PI * SHAKE_FREQUENCY_HZ * t).sin();
         let shake_accel_y = -SHAKE_AMPLITUDE_MM * 0.5 * (2.0 * PI * SHAKE_FREQUENCY_HZ).powi(2)
