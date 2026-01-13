@@ -712,11 +712,12 @@ fn render_simulation_image(beads: &[Bead], config: &TrayConfig) -> Result<String
     
     // Render with OpenSCAD
     // Use a camera angle that shows the tray from above at an angle
+    // Camera format: translate_x,y,z,rot_x,y,z,distance (per OpenSCAD docs)
     let output = Command::new("xvfb-run")
         .args([
             "-a",
             "openscad",
-            "--camera=0,30,0,65,0,25,150",  // Camera: translate, rotate (rotX=65° for lower viewing angle), distance
+            "--camera=0,30,0,65,0,25,150",  // trans=(0,30,0), rot=(65°,0°,25°), dist=150
             "--autocenter",                   // Center the model in view
             "--imgsize=800,600",
             "-o", &image_path,
@@ -826,7 +827,8 @@ fn update_bead(
     //   z_groove(d) = floor_z + groove_radius - sqrt(groove_radius² - d²)
     let min_z = if groove_dist < geometry.groove_radius {
         // In a groove - calculate height based on groove geometry
-        let lateral_offset = groove_dist.abs();
+        // Clamp lateral_offset to avoid numerical issues with sqrt of negative numbers
+        let lateral_offset = groove_dist.abs().min(geometry.groove_radius - 1e-6);
         // Calculate where the groove floor is at this lateral position
         let groove_floor_z = floor_z + geometry.groove_radius 
             - (geometry.groove_radius.powi(2) - lateral_offset.powi(2)).sqrt();
