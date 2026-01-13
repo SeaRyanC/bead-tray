@@ -35,10 +35,10 @@ cargo build --release
 # Run single simulation with default configuration
 ./target/release/bead_simulator
 
-# Run full optimization (49 configurations)
+# Run full optimization (245 configurations)
 ./target/release/bead_simulator optimize
 
-# Run quick test (4 configurations)
+# Run quick test (8 configurations)
 ./target/release/bead_simulator quick-test
 
 # Show help
