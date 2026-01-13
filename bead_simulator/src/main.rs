@@ -34,6 +34,9 @@ const TRAY_TILT_DEG: f64 = 10.0;         // Tilt toward closed end
 const SHAKE_AMPLITUDE_MM: f64 = 15.0;    // Amplitude of shake
 const SHAKE_FREQUENCY_HZ: f64 = 3.0;     // Frequency (3 Hz is typical hand shake)
 
+// Number of simulation runs per configuration (median is taken)
+const SIMULATION_RUNS: usize = 5;
+
 /// Represents the tray geometry extracted from STL
 #[derive(Debug, Clone)]
 struct TrayGeometry {
@@ -166,14 +169,21 @@ fn run_single_simulation() {
     println!("  Groove depth: {} mm", geometry.groove_depth);
     println!("  Triangles: {}\n", geometry.triangles.len());
     
-    // Run simulation
-    let result = run_simulation(&geometry, &config);
+    // Run multiple simulations and take median
+    println!("Running {} simulations to get median result...\n", SIMULATION_RUNS);
+    let (result, beads) = run_multiple_simulations(&geometry, &config);
     
-    println!("\n=== Simulation Results ===");
+    println!("\n=== Simulation Results (Median of {} runs) ===", SIMULATION_RUNS);
     println!("Alignment Score: {:.2}%", result.alignment_score * 100.0);
     println!("Beads in grooves: {}/{}", result.beads_in_grooves, NUM_BEADS);
     println!("Average axial alignment: {:.2}%", result.average_axial_alignment * 100.0);
     println!("Simulation time: {} ms", result.simulation_time_ms);
+    
+    // Render visualization image
+    match render_simulation_image(&beads, &config) {
+        Ok(image_path) => println!("Visualization saved to: {}", image_path),
+        Err(e) => eprintln!("Failed to render visualization: {}", e),
+    }
 }
 
 fn run_optimization(quick_test: bool) {
@@ -222,6 +232,7 @@ fn run_optimization(quick_test: bool) {
     }
     
     println!("\nTotal configurations to test: {}\n", configs.len());
+    println!("Each configuration will run {} simulations (median taken)\n", SIMULATION_RUNS);
     
     // Run simulations (sequentially since STL generation needs file system)
     for (i, config) in configs.iter().enumerate() {
@@ -237,13 +248,19 @@ fn run_optimization(quick_test: bool) {
         match generate_stl(config) {
             Ok(stl_path) => {
                 let geometry = load_tray_geometry(&stl_path, config);
-                let result = run_simulation(&geometry, config);
+                let (result, beads) = run_multiple_simulations(&geometry, config);
                 
                 println!(
-                    "  -> Score: {:.2}%, Beads in grooves: {}",
+                    "  -> Median Score: {:.2}%, Beads in grooves: {}",
                     result.alignment_score * 100.0,
                     result.beads_in_grooves
                 );
+                
+                // Render visualization image
+                match render_simulation_image(&beads, config) {
+                    Ok(image_path) => println!("  -> Image saved: {}", image_path),
+                    Err(e) => eprintln!("  -> Failed to render image: {}", e),
+                }
                 
                 if best_result.is_none()
                     || result.alignment_score > best_result.as_ref().unwrap().alignment_score
@@ -363,15 +380,16 @@ module Main() {{
         depth_factor = config.depth_factor,
     );
     
-    let scad_path = "/tmp/tray_temp.scad";
-    let stl_path = "/tmp/tray_temp.stl";
+    let temp_dir = std::env::temp_dir();
+    let scad_path = temp_dir.join("tray_temp.scad");
+    let stl_path = temp_dir.join("tray_temp.stl");
     
-    std::fs::write(scad_path, scad_content)
+    std::fs::write(&scad_path, scad_content)
         .map_err(|e| format!("Failed to write SCAD file: {}", e))?;
     
     // Run OpenSCAD to generate STL
     let output = Command::new("xvfb-run")
-        .args(["-a", "openscad", "-o", stl_path, scad_path])
+        .args(["-a", "openscad", "-o", &stl_path.to_string_lossy(), &scad_path.to_string_lossy()])
         .output()
         .map_err(|e| format!("Failed to run OpenSCAD: {}", e))?;
     
@@ -382,7 +400,7 @@ module Main() {{
         ));
     }
     
-    Ok(stl_path.to_string())
+    Ok(stl_path.to_string_lossy().to_string())
 }
 
 fn load_tray_geometry(stl_path: &str, config: &TrayConfig) -> TrayGeometry {
@@ -448,7 +466,7 @@ fn load_tray_geometry(stl_path: &str, config: &TrayConfig) -> TrayGeometry {
     }
 }
 
-fn run_simulation(geometry: &TrayGeometry, config: &TrayConfig) -> SimulationResult {
+fn run_simulation(geometry: &TrayGeometry, config: &TrayConfig) -> (SimulationResult, Vec<Bead>) {
     let start_time = std::time::Instant::now();
     
     // Initialize beads randomly on the tray surface
@@ -504,13 +522,216 @@ fn run_simulation(geometry: &TrayGeometry, config: &TrayConfig) -> SimulationRes
     let (alignment_score, beads_in_grooves, average_axial_alignment) =
         calculate_alignment_metrics(&beads, geometry, config);
     
-    SimulationResult {
+    let result = SimulationResult {
         config: config.clone(),
         alignment_score,
         beads_in_grooves,
         average_axial_alignment,
         simulation_time_ms: start_time.elapsed().as_millis(),
+    };
+    
+    (result, beads)
+}
+
+/// Run multiple simulations and return the result with the median alignment score along with
+/// the beads from that median run
+fn run_multiple_simulations(geometry: &TrayGeometry, config: &TrayConfig) -> (SimulationResult, Vec<Bead>) {
+    let mut run_results: Vec<(SimulationResult, Vec<Bead>)> = Vec::with_capacity(SIMULATION_RUNS);
+    
+    for run_idx in 0..SIMULATION_RUNS {
+        print!("  Run {}/{}: ", run_idx + 1, SIMULATION_RUNS);
+        let (result, beads) = run_simulation(geometry, config);
+        println!("Score: {:.2}%", result.alignment_score * 100.0);
+        run_results.push((result, beads));
     }
+    
+    // Sort by alignment score to find median
+    run_results.sort_by(|a, b| {
+        a.0.alignment_score
+            .partial_cmp(&b.0.alignment_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    // Take the median (middle element for 5 runs)
+    let median_idx = SIMULATION_RUNS / 2;
+    run_results.remove(median_idx)
+}
+
+/// Generate a SCAD file visualizing the final bead positions
+fn generate_visualization_scad(beads: &[Bead], config: &TrayConfig) -> String {
+    let mut scad = String::new();
+    
+    // Include the tray geometry
+    scad.push_str(&format!(
+        r#"$fn = 60;
+
+bead_dia = {bead_dia};
+row_length = {row_length};
+wall_height = {wall_height};
+row_halfcount = {row_halfcount};
+row_spacing = {row_spacing};
+floor_thickness = {floor_thickness};
+wall_thickness = {wall_thickness};
+depth_factor = {depth_factor};
+
+// Tray geometry
+Main();
+
+module Main() {{
+    difference() {{
+        walls();
+        translate([0, row_length, 0])
+        translate([-150, 0, 0])
+        rotate([60, 0, 0])
+        translate([0, 0, -15])
+        cube([300, 300, 80]);
+    }}
+    flooring();
+    
+    module walls() {{
+        linear_extrude(floor_thickness + wall_height)
+        difference() {{
+            offset(wall_thickness)
+            hull()
+            projection()
+            rows();
+
+            hull() {{
+                projection()
+                rows();
+                
+                translate([0, 20, 0])
+                projection()
+                rows();
+            }}
+        }}
+    }}
+    
+    module flooring() {{
+        difference() {{
+            core();
+            rows();
+        }}
+    }}
+    
+    module core() {{
+        linear_extrude(floor_thickness + bead_dia * depth_factor)
+        hull()
+        projection()
+        rows();
+    }}
+    
+    module rows() {{
+        for(n = [-row_halfcount : row_halfcount]) {{
+            translate([n * (bead_dia + row_spacing), 0, 0])
+            translate([0, 0, floor_thickness])
+            translate([0, 0, bead_dia / 2])
+            rotate([-90, 0, 0])
+            difference() {{
+                cylinder(d = bead_dia, h = row_length);
+            }}
+        }}
+    
+    }}
+}}
+
+// Beads
+"#,
+        bead_dia = config.bead_dia,
+        row_length = config.row_length,
+        wall_height = config.wall_height,
+        row_halfcount = config.row_halfcount,
+        row_spacing = config.row_spacing,
+        floor_thickness = config.floor_thickness,
+        wall_thickness = config.wall_thickness,
+        depth_factor = config.depth_factor,
+    ));
+    
+    // Add each bead as a cylinder with its position and orientation
+    for (i, bead) in beads.iter().enumerate() {
+        // Convert quaternion to axis-angle for OpenSCAD rotation
+        let axis_angle = bead.orientation.axis_angle();
+        let (axis, angle_rad) = match axis_angle {
+            Some((axis, angle)) => (axis.into_inner(), angle),
+            None => (Vector3::new(0.0, 0.0, 1.0), 0.0),
+        };
+        let angle_deg = angle_rad * 180.0 / PI;
+        
+        scad.push_str(&format!(
+            r#"// Bead {i}
+translate([{x}, {y}, {z}])
+rotate(a={angle}, v=[{ax}, {ay}, {az}])
+rotate([90, 0, 0])
+color("red")
+difference() {{
+    cylinder(d={outer_d}, h={length}, center=true);
+    cylinder(d={inner_d}, h={length}+1, center=true);
+}}
+"#,
+            i = i,
+            x = bead.position.x,
+            y = bead.position.y,
+            z = bead.position.z,
+            angle = angle_deg,
+            ax = axis.x,
+            ay = axis.y,
+            az = axis.z,
+            outer_d = BEAD_OUTER_DIA_MM,
+            inner_d = BEAD_INNER_DIA_MM,
+            length = BEAD_LENGTH_MM,
+        ));
+    }
+    
+    scad
+}
+
+/// Render the simulation result as an image and save it to the images directory
+fn render_simulation_image(beads: &[Bead], config: &TrayConfig) -> Result<String, String> {
+    // Create images directory if it doesn't exist
+    std::fs::create_dir_all("images")
+        .map_err(|e| format!("Failed to create images directory: {}", e))?;
+    
+    // Generate SCAD visualization
+    let scad_content = generate_visualization_scad(beads, config);
+    
+    // Create filename based on parameters
+    let filename = format!(
+        "bd{:.2}_df{:.2}_rs{:.2}",
+        config.bead_dia,
+        config.depth_factor,
+        config.row_spacing
+    );
+    
+    let temp_dir = std::env::temp_dir();
+    let scad_path = temp_dir.join(format!("viz_{}.scad", filename));
+    let scad_path_str = scad_path.to_string_lossy();
+    let image_path = format!("images/{}.png", filename);
+    
+    std::fs::write(&scad_path, scad_content)
+        .map_err(|e| format!("Failed to write visualization SCAD file: {}", e))?;
+    
+    // Render with OpenSCAD
+    // Use a camera angle that shows the tray from above at an angle
+    let output = Command::new("xvfb-run")
+        .args([
+            "-a",
+            "openscad",
+            "--camera=0,35,50,60,0,30,120",  // Camera: eye position, center, distance
+            "--imgsize=800,600",
+            "-o", &image_path,
+            &scad_path_str,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run OpenSCAD for rendering: {}", e))?;
+    
+    if !output.status.success() {
+        return Err(format!(
+            "OpenSCAD rendering failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    
+    Ok(image_path)
 }
 
 fn initialize_beads(geometry: &TrayGeometry, config: &TrayConfig) -> Vec<Bead> {
@@ -766,6 +987,10 @@ fn resolve_bead_collisions(beads: &mut [Bead]) {
     }
 }
 
+// Threshold for considering a bead "fully axially aligned"
+// 0.95 corresponds to approximately 18 degrees from perfect alignment
+const AXIAL_ALIGNMENT_THRESHOLD: f64 = 0.95;
+
 fn calculate_alignment_metrics(
     beads: &[Bead],
     geometry: &TrayGeometry,
@@ -773,6 +998,7 @@ fn calculate_alignment_metrics(
 ) -> (f64, usize, f64) {
     let groove_tolerance = geometry.groove_radius * 0.5;
     
+    let mut fully_aligned_beads = 0;
     let mut beads_in_grooves = 0;
     let mut total_axial_alignment = 0.0;
     
@@ -785,21 +1011,27 @@ fn calculate_alignment_metrics(
         let expected_z = config.floor_thickness + geometry.groove_depth / 2.0;
         let z_ok = (bead.position.z - expected_z).abs() < geometry.groove_radius;
         
-        if in_groove && z_ok {
-            beads_in_grooves += 1;
-        }
-        
         // Axial alignment: how well the bead's long axis aligns with Y
         let bead_axis = bead.orientation * Vector3::y();
         let alignment = bead_axis.dot(&Vector3::y()).abs();
         total_axial_alignment += alignment;
+        
+        // A bead only counts toward the positive score if it's fully axially aligned
+        // in a groove. Partial axial alignment doesn't score anything.
+        let fully_aligned = alignment >= AXIAL_ALIGNMENT_THRESHOLD;
+        
+        if in_groove && z_ok {
+            beads_in_grooves += 1;
+            if fully_aligned {
+                fully_aligned_beads += 1;
+            }
+        }
     }
     
     let average_axial_alignment = total_axial_alignment / beads.len() as f64;
     
-    // Combined score: weighted combination of groove placement and axial alignment
-    let groove_score = beads_in_grooves as f64 / beads.len() as f64;
-    let alignment_score = groove_score * 0.6 + average_axial_alignment * 0.4;
+    // Score is based only on beads that are both in groove AND fully axially aligned
+    let alignment_score = fully_aligned_beads as f64 / beads.len() as f64;
     
     (alignment_score, beads_in_grooves, average_axial_alignment)
 }

@@ -7,3 +7,6 @@ target/
 
 # Generated simulation results
 optimization_results.json
+
+# Generated visualization images
+images/
