@@ -388,8 +388,8 @@ module Main() {{
         .map_err(|e| format!("Failed to write SCAD file: {}", e))?;
     
     // Run OpenSCAD to generate STL
-    let output = Command::new("xvfb-run")
-        .args(["-a", "openscad", "-o", &stl_path.to_string_lossy(), &scad_path.to_string_lossy()])
+    let output = Command::new("/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD")
+        .args(["-o",  &stl_path.to_string_lossy(), &scad_path.to_string_lossy()])
         .output()
         .map_err(|e| format!("Failed to run OpenSCAD: {}", e))?;
     
