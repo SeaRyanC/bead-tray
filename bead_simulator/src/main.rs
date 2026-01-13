@@ -716,7 +716,8 @@ fn render_simulation_image(beads: &[Bead], config: &TrayConfig) -> Result<String
         .args([
             "-a",
             "openscad",
-            "--camera=0,35,50,70,0,30,120",  // Camera: translate, then rotate (rotX=70° for lower angle), distance
+            "--camera=0,30,0,65,0,25,150",  // Camera: translate, rotate (rotX=65° for lower viewing angle), distance
+            "--autocenter",                   // Center the model in view
             "--imgsize=800,600",
             "-o", &image_path,
             &scad_path_str,
