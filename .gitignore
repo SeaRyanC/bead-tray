@@ -1,0 +1,9 @@
+# Generated STL files
+*.stl
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Generated simulation results
+optimization_results.json
