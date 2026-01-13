@@ -64,6 +64,15 @@ The simulator models:
 - Tray tilted 10° toward the closed end
 - Friction, gravity, bead-bead collisions
 - Groove constraint forces
+- Each configuration is run 5 times and the median score is used for robustness
+
+### Scoring Algorithm
+
+The alignment score counts only beads that are:
+1. Properly seated in a groove (within tolerance of groove center and correct Z position)
+2. **Fully axially aligned** with the groove direction (≥95% alignment with Y-axis, approximately within 18° of perfect alignment)
+
+Partial axial alignment does not contribute to the score. This ensures the score reflects beads that are truly well-aligned in their grooves.
 
 ### Optimization Parameters
 
@@ -81,6 +90,8 @@ Results are saved to `optimization_results.json` containing:
 - Number of beads settled in grooves
 - Average axial alignment
 - Simulation time
+
+Visualization images are saved to the `images/` directory with filenames based on parameters (e.g., `bd2.80_df0.45_rs0.40.png`). Each image shows the tray with the final bead positions rendered in OpenSCAD.
 
 ## Generating STL
 
