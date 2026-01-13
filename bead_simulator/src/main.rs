@@ -716,7 +716,7 @@ fn render_simulation_image(beads: &[Bead], config: &TrayConfig) -> Result<String
         .args([
             "-a",
             "openscad",
-            "--camera=0,35,50,60,0,30,120",  // Camera: eye position, center, distance
+            "--camera=0,35,50,70,0,30,120",  // Camera: translate, then rotate (rotX=70° for lower angle), distance
             "--imgsize=800,600",
             "-o", &image_path,
             &scad_path_str,
@@ -818,24 +818,22 @@ fn update_bead(
     
     // Floor collision
     let floor_z = config.floor_thickness;
-    let groove_bottom_z = floor_z + groove_depth_at_pos - geometry.groove_radius;
     
     // Check if in a groove
+    // The groove is a cylindrical channel with center axis at z = floor_z + groove_radius
+    // At lateral offset d from center, the groove floor is at:
+    //   z_groove(d) = floor_z + groove_radius - sqrt(groove_radius² - d²)
     let min_z = if groove_dist < geometry.groove_radius {
         // In a groove - calculate height based on groove geometry
         let lateral_offset = groove_dist.abs();
-        let groove_bottom = groove_bottom_z;
-        if lateral_offset < geometry.groove_radius - bead_radius {
-            // Deep in groove
-            groove_bottom + bead_radius + 
-                (geometry.groove_radius.powi(2) - lateral_offset.powi(2)).sqrt() - geometry.groove_radius
-        } else {
-            // On edge of groove
-            floor_z + groove_depth_at_pos + bead_radius * 0.5
-        }
+        // Calculate where the groove floor is at this lateral position
+        let groove_floor_z = floor_z + geometry.groove_radius 
+            - (geometry.groove_radius.powi(2) - lateral_offset.powi(2)).sqrt();
+        // Bead center sits above the groove floor by bead_radius
+        groove_floor_z + bead_radius
     } else {
-        // On flat floor
-        floor_z + bead_radius
+        // On flat floor (core top surface, outside grooves)
+        floor_z + groove_depth_at_pos + bead_radius
     };
     
     if bead.position.z < min_z {
