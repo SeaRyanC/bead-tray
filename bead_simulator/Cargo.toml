@@ -1,0 +1,15 @@
+[package]
+name = "bead_simulator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# STL file parsing
+stl_io = "0.7"
+# Linear algebra for physics
+nalgebra = "0.33"
+# Random number generation for initial bead placement
+rand = "0.8"
+# Serialization for config/results
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
