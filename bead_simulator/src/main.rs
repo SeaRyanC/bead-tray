@@ -712,11 +712,13 @@ fn render_simulation_image(beads: &[Bead], config: &TrayConfig) -> Result<String
     
     // Render with OpenSCAD
     // Use a camera angle that shows the tray from above at an angle
+    // Camera format: translate_x,y,z,rot_x,y,z,distance (per OpenSCAD docs)
     let output = Command::new("xvfb-run")
         .args([
             "-a",
             "openscad",
-            "--camera=0,35,50,60,0,30,120",  // Camera: eye position, center, distance
+            "--camera=0,30,0,65,0,25,150",  // trans=(0,30,0), rot=(65°,0°,25°), dist=150
+            "--autocenter",                   // Center the model in view
             "--imgsize=800,600",
             "-o", &image_path,
             &scad_path_str,
@@ -818,24 +820,23 @@ fn update_bead(
     
     // Floor collision
     let floor_z = config.floor_thickness;
-    let groove_bottom_z = floor_z + groove_depth_at_pos - geometry.groove_radius;
     
     // Check if in a groove
+    // The groove is a cylindrical channel with center axis at z = floor_z + groove_radius
+    // At lateral offset d from center, the groove floor is at:
+    //   z_groove(d) = floor_z + groove_radius - sqrt(groove_radius² - d²)
     let min_z = if groove_dist < geometry.groove_radius {
         // In a groove - calculate height based on groove geometry
-        let lateral_offset = groove_dist.abs();
-        let groove_bottom = groove_bottom_z;
-        if lateral_offset < geometry.groove_radius - bead_radius {
-            // Deep in groove
-            groove_bottom + bead_radius + 
-                (geometry.groove_radius.powi(2) - lateral_offset.powi(2)).sqrt() - geometry.groove_radius
-        } else {
-            // On edge of groove
-            floor_z + groove_depth_at_pos + bead_radius * 0.5
-        }
+        // Clamp lateral_offset to avoid numerical issues with sqrt of negative numbers
+        let lateral_offset = groove_dist.abs().min(geometry.groove_radius - 1e-6);
+        // Calculate where the groove floor is at this lateral position
+        let groove_floor_z = floor_z + geometry.groove_radius 
+            - (geometry.groove_radius.powi(2) - lateral_offset.powi(2)).sqrt();
+        // Bead center sits above the groove floor by bead_radius
+        groove_floor_z + bead_radius
     } else {
-        // On flat floor
-        floor_z + bead_radius
+        // On flat floor (core top surface, outside grooves)
+        floor_z + groove_depth_at_pos + bead_radius
     };
     
     if bead.position.z < min_z {
