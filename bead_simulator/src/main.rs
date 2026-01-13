@@ -712,13 +712,9 @@ fn render_simulation_image(beads: &[Bead], config: &TrayConfig) -> Result<String
     
     // Render with OpenSCAD
     // Use a camera angle that shows the tray from above at an angle
-    // Camera format: translate_x,y,z,rot_x,y,z,distance (per OpenSCAD docs)
-    let output = Command::new("xvfb-run")
+    let output = Command::new("/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD")
         .args([
-            "-a",
-            "openscad",
-            "--camera=0,30,0,65,0,25,150",  // trans=(0,30,0), rot=(65°,0°,25°), dist=150
-            "--autocenter",                   // Center the model in view
+            "--camera=0,35,50,60,0,30,120",  // Camera: eye position, center, distance
             "--imgsize=800,600",
             "-o", &image_path,
             &scad_path_str,
